@@ -19,13 +19,16 @@ tf.flags.DEFINE_string("vocab_path", None, "Path to vocabulary.txt file")
 
 # Training Parameters
 tf.flags.DEFINE_float("learning_rate", 0.001, "Learning rate")
-tf.flags.DEFINE_integer("batch_size", 16, "Batch size during training")
-tf.flags.DEFINE_integer("eval_batch_size", 20, "Batch size during evaluation")
-tf.flags.DEFINE_string("optimizer", "Adam", "Optimizer Name (Adam, Adagrad, etc)")
 tf.flags.DEFINE_float("keep_rate", 1.0, "Drop out probability")
 tf.flags.DEFINE_float("decay_rate", 0.95, "Exponential decay rate")
+tf.flags.DEFINE_integer("batch_size", 16, "Batch size during training")
+tf.flags.DEFINE_integer("eval_batch_size", 20, "Batch size during evaluation")
 tf.flags.DEFINE_integer("decay_steps", 5000, "Decay steps")
+tf.flags.DEFINE_string("optimizer", "Adam", "Optimizer Name (Adam, Adagrad, etc)")
+tf.flags.DEFINE_string("feature_type", "default", "Use last state(default), sum of states(sum), or maxpool(max)?")
 tf.flags.DEFINE_bool("staircase", False, "Staircase decay")
+tf.flags.DEFINE_bool("bidirectional", False, "Use bidirectional LSTM?")
+tf.flags.DEFINE_bool("attention", False, "Use attention for alignment?")
 
 FLAGS = tf.flags.FLAGS
 
@@ -46,7 +49,10 @@ HParams = namedtuple(
         "keep_rate",
         "decay_rate",
         "decay_steps",
-        "staircase"
+        "staircase",
+        "bidirectional",
+        "attention",
+        "feature_type",
     ])
 
 
@@ -66,5 +72,8 @@ def create_hparams():
         keep_rate=FLAGS.keep_rate,
         decay_rate=FLAGS.decay_rate,
         decay_steps=FLAGS.decay_steps,
-        staircase=FLAGS.staircase
+        staircase=FLAGS.staircase,
+        bidirectional=FLAGS.bidirectional,
+        attention=FLAGS.attention,
+        feature_type=FLAGS.feature_type,
     )

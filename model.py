@@ -48,7 +48,10 @@ def create_model_fn(hparams, model_impl):
                 all_utterances,
                 tf.transpose(tf.stack(all_utterances_lens, axis=0)),
                 targets,
-                hparams.batch_size)
+                hparams.batch_size,
+                hparams.bidirectional,
+                hparams.attention,
+                hparams.feature_type,)
             train_op = create_train_op(loss, hparams)
             return probs, loss, train_op
 
@@ -62,7 +65,10 @@ def create_model_fn(hparams, model_impl):
                 tf.concat(0, all_utterances),
                 tf.concat(0, all_utterances_lens),
                 None,
-                hparams.eval_batch_size)
+                hparams.eval_batch_size,
+                hparams.bidirectional,
+                hparams.attention,
+                hparams.feature_type,)
 
             split_probs = tf.split(0, features["len"], probs)
             probs = tf.concat(1, split_probs)
@@ -78,7 +84,10 @@ def create_model_fn(hparams, model_impl):
                 all_utterances,
                 tf.transpose(tf.stack(all_utterances_lens, axis=0)),
                 targets,
-                hparams.eval_batch_size)
+                hparams.eval_batch_size,
+                hparams.bidirectional,
+                hparams.attention,
+                hparams.feature_type,)
 
             shaped_probs = probs
 

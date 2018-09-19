@@ -32,6 +32,18 @@ def get_embeddings(hparams):
             initializer=initializer)
 
 
+def make_cell(dimension, residual, dropout):
+    cell = tf.nn.rnn_cell.LSTMCell(
+            dimension,
+            forget_bias=2.0,
+            use_peepholes=True,
+            state_is_tuple=True)
+    if dropout > 0:
+        cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=1-dropout)
+    if residual:
+        cell = tf.nn.rnn_cell.ResidualWrapper(cell)
+    return cell
+
 def dual_encoder_model(
         hparams,
         mode,
@@ -40,7 +52,10 @@ def dual_encoder_model(
         utterances,
         utterances_len,
         targets,
-        batch_size):
+        batch_size,
+        bidirectional=False,
+        attention=False,
+        feature_type="default"):
     # Initialize embeddings randomly or with pre-trained vectors if available
     embeddings_W = get_embeddings(hparams)
 
@@ -50,45 +65,79 @@ def dual_encoder_model(
     utterances_embedded = tf.nn.embedding_lookup(
         embeddings_W, utterances, name="embed_utterance")
 
+    # Set dropout and residual options
+    residual, dropout = False, 0
 
     # Build the Context Encoder RNN
     with tf.variable_scope("context-rnn") as vs:
         # We use an LSTM Cell
-        cell_context = tf.nn.rnn_cell.LSTMCell(
-            hparams.rnn_dim,
-            forget_bias=2.0,
-            use_peepholes=True,
-            state_is_tuple=True)
+        cell_context = make_cell(hparams.rnn_dim, residual, dropout)
 
-        # Run context through the RNN
-        context_encoded_outputs, context_encoded = tf.nn.dynamic_rnn(cell_context, context_embedded,
+        if bidirectional:
+            # Create cell for reverse direction
+            cell_context_reverse = make_cell(hparams.rnn_dim, residual, dropout)
+
+            (context_encoded_outputs_f, context_encoded_outputs_b), (context_encoded_f, context_encoded_b) = tf.nn.bidirectional_dynamic_rnn(cell_context, 
+                                                                            cell_context_reverse, context_embedded,
+                                                                            context_len, dtype=tf.float32)
+            context_encoded_outputs = tf.concat([context_encoded_outputs_f, context_encoded_outputs_b], -1)
+            context_encoded         = tf.concat([context_encoded_f, context_encoded_b], -1)
+        else:
+            # Run context through the RNN
+            context_encoded_outputs, context_encoded = tf.nn.dynamic_rnn(cell_context, context_embedded,
                                                                             context_len, dtype=tf.float32)
 
     # Build the Utterance Encoder RNN
     with tf.variable_scope("utterance-rnn") as vs:
         # We use an LSTM Cell
-        cell_utterance = tf.nn.rnn_cell.LSTMCell(
-            hparams.rnn_dim,
-            forget_bias=2.0,
-            use_peepholes=True,
-            state_is_tuple=True)
+        cell_utterance = make_cell(hparams.rnn_dim, residual, dropout)
+
+        if bidirectional:
+            cell_utterance_reverse = make_cell(hparams.rnn_dim, residual, dropout)
+
         # Run all utterances through the RNN batch by batch
         # TODO: Needs to be parallelized
         all_utterances_encoded = []
         for i in range(batch_size):
-            temp_outputs, temp_states = tf.nn.dynamic_rnn(cell_utterance, utterances_embedded[:,i],
-                                                          utterances_len[i], dtype=tf.float32)
-            all_utterances_encoded.append(temp_states[1]) # since it's a tuple, use the hidden states
+            if bidirectional:
+                (temp_outputs_f, temp_outputs_b), (temp_states_f, temp_states_b) = tf.nn.bidirectional_dynamic_rnn(cell_utterance,
+                                                                            cell_utterance_reverse, utterances_embedded[:,i],
+                                                                            utterances_len[i], dtype=tf.float32)
+                temp_outputs = tf.concat([temp_outputs_f, temp_outputs_b], -1)
+                temp_states  = tf.concat([temp_states_f, temp_states_b], -1)
+            else:
+                temp_outputs, temp_states = tf.nn.dynamic_rnn(cell_utterance, utterances_embedded[:,i],
+                                                            utterances_len[i], dtype=tf.float32)
+
+            # Use last state / sum of states / maxpool of states
+            if feature_type == "sum":
+                utterance_encoded_feature = tf.reduce_sum(temp_outputs, 1)
+            elif feature_type == "max":
+                utterance_encoded_feature = tf.reduce_max(temp_outputs, 1)
+            else:
+                utterance_encoded_feature = temp_states[1]
+            all_utterances_encoded.append(utterance_encoded_feature) # since it's a tuple, use the hidden states
 
         all_utterances_encoded = tf.stack(all_utterances_encoded, axis=0)
 
     with tf.variable_scope("prediction") as vs:
+        M_dim = hparams.rnn_dim
+        if bidirectional:
+            M_dim *= 2
         M = tf.get_variable("M",
-                            shape=[hparams.rnn_dim, hparams.rnn_dim],
+                            shape=[M_dim, M_dim],
                             initializer=tf.truncated_normal_initializer())
 
+        # Use last state / sum of states / maxpool of states
+        if feature_type == "sum":
+            context_encoded_feature = tf.reduce_sum(context_encoded_outputs, 1)
+        elif feature_type == "max":
+            context_encoded_feature = tf.reduce_max(context_encoded_outputs, 1)
+        else:
+            context_encoded_feature = context_encoded[1]
+        
         # "Predict" a  response: c * M
-        generated_response = tf.matmul(context_encoded[1], M) # using the hidden states
+        generated_response = tf.matmul(context_encoded_feature, M) #[1], M) # using the hidden states
         generated_response = tf.expand_dims(generated_response, 1)
         all_utterances_encoded = tf.transpose(all_utterances_encoded, perm=[0, 2, 1]) # transpose last two dimensions
 
