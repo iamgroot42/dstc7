@@ -87,6 +87,11 @@ def dual_encoder_model(
             context_encoded_outputs, context_encoded = tf.nn.dynamic_rnn(cell_context, context_embedded,
                                                                             context_len, dtype=tf.float32)
 
+    # Calculate output embedding dimension
+    M_dim = hparams.rnn_dim
+    if bidirectional:
+        M_dim *= 2
+
     # Build the Utterance Encoder RNN
     with tf.variable_scope("utterance-rnn") as vs:
         # We use an LSTM Cell
@@ -112,8 +117,16 @@ def dual_encoder_model(
             # Use last state / sum of states / maxpool of states
             if feature_type == "sum":
                 utterance_encoded_feature = tf.reduce_sum(temp_outputs, 1)
+            elif feature_type == "mean":
+                utterance_encoded_feature = tf.reduce_mean(temp_outputs, 1)
             elif feature_type == "max":
                 utterance_encoded_feature = tf.reduce_max(temp_outputs, 1)
+            elif feature_type == "cnn":
+                utterance_encoded_feature = tf.reduce_max(tf.layers.conv1d(inputs=temp_outputs,
+                                                            filters=M_dim,
+                                                            kernel_size=2,
+                                                            padding='same',
+                                                            activation=tf.tanh), 1)
             else:
                 utterance_encoded_feature = temp_states[1]
             all_utterances_encoded.append(utterance_encoded_feature) # since it's a tuple, use the hidden states
@@ -121,9 +134,6 @@ def dual_encoder_model(
         all_utterances_encoded = tf.stack(all_utterances_encoded, axis=0)
 
     with tf.variable_scope("prediction") as vs:
-        M_dim = hparams.rnn_dim
-        if bidirectional:
-            M_dim *= 2
         M = tf.get_variable("M",
                             shape=[M_dim, M_dim],
                             initializer=tf.truncated_normal_initializer())
@@ -131,8 +141,16 @@ def dual_encoder_model(
         # Use last state / sum of states / maxpool of states
         if feature_type == "sum":
             context_encoded_feature = tf.reduce_sum(context_encoded_outputs, 1)
+        elif feature_type == "mean":
+            context_encoded_feature = tf.reduce_mean(context_encoded_outputs, 1)
         elif feature_type == "max":
             context_encoded_feature = tf.reduce_max(context_encoded_outputs, 1)
+        elif feature_type == "cnn":
+            context_encoded_feature = tf.reduce_max(tf.layers.conv1d(inputs=context_encoded_outputs,
+                                                        filters=M_dim,
+                                                        kernel_size=2,
+                                                        padding='same',
+                                                        activation=tf.tanh), 1)
         else:
             context_encoded_feature = context_encoded[1]
         
