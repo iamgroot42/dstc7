@@ -13,7 +13,7 @@ from models.dual_encoder import dual_encoder_model
 tf.flags.DEFINE_string("train_in", None, "Path to input data file")
 tf.flags.DEFINE_string("validation_in", None, "Path to validation data file")
 
-tf.flags.DEFINE_string("model_dir", None, "Directory to store model checkpoints (defaults to ./runs)")
+tf.flags.DEFINE_string("model_dir", None, "Directory to store model checkpoints")
 tf.flags.DEFINE_integer("loglevel", 20, "Tensorflow log level")
 tf.flags.DEFINE_integer("num_epochs", None, "Number of training Epochs. Defaults to indefinite.")
 tf.flags.DEFINE_integer("eval_every", 2000, "Evaluate after this many train steps")
@@ -25,7 +25,8 @@ TIMESTAMP = int(time.time())
 if FLAGS.model_dir:
     MODEL_DIR = FLAGS.model_dir
 else:
-    MODEL_DIR = os.path.abspath(os.path.join("./runs", str(TIMESTAMP)))
+    print("No model directory specified!")
+    exit()
 
 TRAIN_FILE = os.path.abspath(os.path.join(FLAGS.train_in))
 VALIDATION_FILE = os.path.abspath(os.path.join(FLAGS.validation_in))

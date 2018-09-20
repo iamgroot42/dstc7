@@ -100,6 +100,11 @@ def dual_encoder_model(
         if bidirectional:
             cell_utterance_reverse = make_cell(hparams.rnn_dim, residual, dropout)
 
+        utterance_cnn = tf.keras.layers.Conv1D(filters=M_dim,
+                                                kernel_size=2,
+                                                padding='same',
+                                                activation=tf.tanh,
+                                                name='utterance_conv')
         # Run all utterances through the RNN batch by batch
         # TODO: Needs to be parallelized
         all_utterances_encoded = []
@@ -122,11 +127,7 @@ def dual_encoder_model(
             elif feature_type == "max":
                 utterance_encoded_feature = tf.reduce_max(temp_outputs, 1)
             elif feature_type == "cnn":
-                utterance_encoded_feature = tf.reduce_max(tf.layers.conv1d(inputs=temp_outputs,
-                                                            filters=M_dim,
-                                                            kernel_size=2,
-                                                            padding='same',
-                                                            activation=tf.tanh), 1)
+                utterance_encoded_feature = tf.reduce_max(utterance_cnn(temp_outputs), 1)
             else:
                 utterance_encoded_feature = temp_states[1]
             all_utterances_encoded.append(utterance_encoded_feature) # since it's a tuple, use the hidden states
@@ -150,7 +151,8 @@ def dual_encoder_model(
                                                         filters=M_dim,
                                                         kernel_size=2,
                                                         padding='same',
-                                                        activation=tf.tanh), 1)
+                                                        activation=tf.tanh,
+                                                        name='context_conv'), 1)
         else:
             context_encoded_feature = context_encoded[1]
         
