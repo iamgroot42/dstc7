@@ -68,6 +68,11 @@ def dual_encoder_model(
     # Set dropout and residual options
     residual, dropout = False, 0
 
+    # Calculate output embedding dimension
+    M_dim = hparams.rnn_dim
+    if bidirectional:
+        M_dim *= 2
+
     # Build the Context Encoder RNN
     with tf.variable_scope("context-rnn") as vs:
         # We use an LSTM Cell
@@ -87,58 +92,6 @@ def dual_encoder_model(
             context_encoded_outputs, context_encoded = tf.nn.dynamic_rnn(cell_context, context_embedded,
                                                                             context_len, dtype=tf.float32)
 
-    # Calculate output embedding dimension
-    M_dim = hparams.rnn_dim
-    if bidirectional:
-        M_dim *= 2
-
-    # Build the Utterance Encoder RNN
-    with tf.variable_scope("utterance-rnn") as vs:
-        # We use an LSTM Cell
-        cell_utterance = make_cell(hparams.rnn_dim, residual, dropout)
-
-        if bidirectional:
-            cell_utterance_reverse = make_cell(hparams.rnn_dim, residual, dropout)
-
-        utterance_cnn = tf.keras.layers.Conv1D(filters=M_dim,
-                                                kernel_size=2,
-                                                padding='same',
-                                                activation=tf.tanh,
-                                                name='utterance_conv')
-        # Run all utterances through the RNN batch by batch
-        # TODO: Needs to be parallelized
-        all_utterances_encoded = []
-        for i in range(batch_size):
-            if bidirectional:
-                (temp_outputs_f, temp_outputs_b), (temp_states_f, temp_states_b) = tf.nn.bidirectional_dynamic_rnn(cell_utterance,
-                                                                            cell_utterance_reverse, utterances_embedded[:,i],
-                                                                            utterances_len[i], dtype=tf.float32)
-                temp_outputs = tf.concat([temp_outputs_f, temp_outputs_b], -1)
-                temp_states  = tf.concat([temp_states_f, temp_states_b], -1)
-            else:
-                temp_outputs, temp_states = tf.nn.dynamic_rnn(cell_utterance, utterances_embedded[:,i],
-                                                            utterances_len[i], dtype=tf.float32)
-
-            # Use last state / sum of states / maxpool of states
-            if feature_type == "sum":
-                utterance_encoded_feature = tf.reduce_sum(temp_outputs, 1)
-            elif feature_type == "mean":
-                utterance_encoded_feature = tf.reduce_mean(temp_outputs, 1)
-            elif feature_type == "max":
-                utterance_encoded_feature = tf.reduce_max(temp_outputs, 1)
-            elif feature_type == "cnn":
-                utterance_encoded_feature = tf.reduce_max(utterance_cnn(temp_outputs), 1)
-            else:
-                utterance_encoded_feature = temp_states[1]
-            all_utterances_encoded.append(utterance_encoded_feature) # since it's a tuple, use the hidden states
-
-        all_utterances_encoded = tf.stack(all_utterances_encoded, axis=0)
-
-    with tf.variable_scope("prediction") as vs:
-        M = tf.get_variable("M",
-                            shape=[M_dim, M_dim],
-                            initializer=tf.truncated_normal_initializer())
-
         # Use last state / sum of states / maxpool of states
         if feature_type == "sum":
             context_encoded_feature = tf.reduce_sum(context_encoded_outputs, 1)
@@ -155,6 +108,79 @@ def dual_encoder_model(
                                                         name='context_conv'), 1)
         else:
             context_encoded_feature = context_encoded[1]
+
+        # Initialize attention weights of attention specified
+        if attention:
+            W_am = tf.get_variable("W_am",
+                            shape=[M_dim, M_dim],
+                            initializer=tf.truncated_normal_initializer())
+            W_qm = tf.get_variable("W_qm",
+                            shape=[M_dim, M_dim],
+                            initializer=tf.truncated_normal_initializer())
+            w_ms = tf.get_variable("w_ms",
+                            shape=[M_dim, M_dim],
+                            initializer=tf.truncated_normal_initializer())
+
+
+    # Build the Utterance Encoder RNN
+    with tf.variable_scope("utterance-rnn") as vs:
+        # We use an LSTM Cell
+        cell_utterance = make_cell(hparams.rnn_dim, residual, dropout)
+
+        # Construct reverse-direction cell if bidirectional architecture specified
+        if bidirectional:
+            cell_utterance_reverse = make_cell(hparams.rnn_dim, residual, dropout)
+
+        # Initialize CNN kernels if CNN-pooling specified
+        if feature_type == "cnn":
+            utterance_cnn = tf.keras.layers.Conv1D(filters=M_dim,
+                                                    kernel_size=2,
+                                                    padding='same',
+                                                    activation=tf.tanh,
+                                                    name='utterance_conv')
+
+        # Run all utterances through the RNN batch by batch
+        # TODO: Needs to be parallelized
+        all_utterances_encoded = []
+        for i in range(batch_size):
+            if bidirectional:
+                (temp_outputs_f, temp_outputs_b), (temp_states_f, temp_states_b) = tf.nn.bidirectional_dynamic_rnn(cell_utterance,
+                                                                            cell_utterance_reverse, utterances_embedded[:,i],
+                                                                            utterances_len[i], dtype=tf.float32)
+                temp_outputs = tf.concat([temp_outputs_f, temp_outputs_b], -1)
+                temp_states  = tf.concat([temp_states_f, temp_states_b], -1)
+            else:
+                temp_outputs, temp_states = tf.nn.dynamic_rnn(cell_utterance, utterances_embedded[:,i],
+                                                            utterances_len[i], dtype=tf.float32)
+
+            # Modify using attention (if specified):
+            if attention:
+                assert feature_type in ["sum", "mean", "max", "cnn"] 
+                m_aq = tf.tanh(tf.add(tf.map_fn(lambda x: tf.matmul(x, W_am), temp_outputs),
+                    tf.matmul(tf.expand_dims(context_encoded_feature[i], 0), W_qm)))
+                s_aq = tf.nn.softmax(tf.map_fn(lambda x: tf.matmul(x, w_ms), m_aq))
+                temp_outputs = tf.multiply(temp_outputs, s_aq)
+
+            # Use last state / sum of states / maxpool of states
+            if feature_type == "sum":
+                utterance_encoded_feature = tf.reduce_sum(temp_outputs, 1)
+            elif feature_type == "mean":
+                utterance_encoded_feature = tf.reduce_mean(temp_outputs, 1)
+            elif feature_type == "max":
+                utterance_encoded_feature = tf.reduce_max(temp_outputs, 1)
+            elif feature_type == "cnn":
+                utterance_encoded_feature = tf.reduce_max(utterance_cnn(temp_outputs), 1)
+            else:
+                utterance_encoded_feature = temp_states[1]
+
+            all_utterances_encoded.append(utterance_encoded_feature) # since it's a tuple, use the hidden states
+
+        all_utterances_encoded = tf.stack(all_utterances_encoded, axis=0)
+
+    with tf.variable_scope("prediction") as vs:
+        M = tf.get_variable("M",
+                            shape=[M_dim, M_dim],
+                            initializer=tf.truncated_normal_initializer())
         
         # "Predict" a  response: c * M
         generated_response = tf.matmul(context_encoded_feature, M) #[1], M) # using the hidden states
