@@ -18,6 +18,7 @@ tf.flags.DEFINE_string("validation_out", None, "Path to output validation tfreco
 
 tf.flags.DEFINE_string("vocab_path", None, "Path to save vocabulary txt file")
 tf.flags.DEFINE_string("vocab_processor", None, "Path to save vocabulary processor")
+tf.flags.DEFINE_boolean("has_dssm", False, "Does dataset have DSSM features?")
 
 FLAGS = tf.flags.FLAGS
 
@@ -36,6 +37,7 @@ def process_dialog(dialog):
     """
 
     row = []
+    dssm_row = []
     utterances = dialog['messages-so-far']
 
     # Create the context
@@ -43,9 +45,9 @@ def process_dialog(dialog):
     speaker = None
     for msg in utterances:
         if speaker is None:
-            print(msg['utterance'])
-            print("-------------------------------")
-            print(' '.join(tokenize(msg['utterance'])))
+            #print(msg['utterance'])
+            #print("-------------------------------")
+            #print(' '.join(tokenize(msg['utterance'])))
             context += ' '.join(tokenize(msg['utterance'])) + " __eou__ "
             speaker = msg['speaker']
         elif speaker != msg['speaker']:
@@ -57,6 +59,9 @@ def process_dialog(dialog):
     context += "__eot__"
     row.append(context)
 
+    if FLAGS.has_dssm:
+        dssm_row.append(dialog['dssm'])
+
     # Create the next utterance options and the target label
     correct_answer = dialog['options-for-correct-answers'][0]
     target_id = correct_answer['candidate-id']
@@ -65,13 +70,15 @@ def process_dialog(dialog):
         if utterance['candidate-id'] == target_id:
             target_index = i
         row.append(' '.join(tokenize(utterance['utterance'])) + " __eou__ ")
+        if FLAGS.has_dssm:
+            dssm_row.append(utterance['dssm'])
 
     if target_index is None:
         print('Correct answer not found in options-for-next - example {}. Setting 0 as the correct index'.format(dialog['example-id']))
     else:
         row.append(target_index)
 
-    return row
+    return (row, dssm_row)
 
 
 def create_dialog_iter(filename):
@@ -93,6 +100,8 @@ def create_utterance_iter(input_iter):
     :return:
     """
     for row in input_iter:
+        if FLAGS.has_dssm:
+            row, _ = row
         all_utterances = []
         context = row[0]
         next_utterances = row[1:101]
@@ -128,6 +137,8 @@ def create_example_new_format(row, vocab):
     :param vocab:
     :return:
     """
+    if FLAGS.has_dssm:
+        row, row_dssm = row
     context = row[0]
     next_utterances = row[1:101]
     target = row[-1]
@@ -140,17 +151,22 @@ def create_example_new_format(row, vocab):
     example.features.feature["context"].int64_list.value.extend(context_transformed)
     example.features.feature["context_len"].int64_list.value.extend([context_len])
     example.features.feature["target"].int64_list.value.extend([target])
+    if FLAGS.has_dssm:
+        example.features.feature["context_dssm"].bytes_list.value.extend([row_dssm[0].encode('utf-8')])
 
     # Distractor sequences
     for i, utterance in enumerate(next_utterances):
         opt_key = "option_{}".format(i)
         opt_len_key = "option_{}_len".format(i)
+        opt_dssm_key = "option_{}_dssm".format(i)
         # Utterance Length Feature
         opt_len = len(next(vocab._tokenizer([utterance])))
         example.features.feature[opt_len_key].int64_list.value.extend([opt_len])
         # Distractor Text Feature
         opt_transformed = transform_sentence(utterance, vocab)
         example.features.feature[opt_key].int64_list.value.extend(opt_transformed)
+        if FLAGS.has_dssm:
+            example.features.feature[opt_dssm_key].bytes_list.value.extend([row_dssm[i+1].encode('utf-8')])
     return example
 
 
