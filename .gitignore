@@ -1,5 +1,6 @@
 # Repository specific
 data/*
+FAST/*
 runs*
 
 # Byte-compiled / optimized / DLL files

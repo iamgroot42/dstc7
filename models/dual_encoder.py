@@ -1,6 +1,208 @@
 import tensorflow as tf
 from models import helpers
 
+from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import variable_scope as vs
+from tensorflow.python.ops import gen_math_ops
+from tensorflow.python.ops.rnn_cell_impl import RNNCell
+
+
+def gen_non_linearity(A, non_linearity):
+    '''
+    Returns required activation for a tensor based on the inputs
+    '''
+    if non_linearity == "tanh":
+        return math_ops.tanh(A)
+    elif non_linearity == "sigmoid":
+        return math_ops.sigmoid(A)
+    elif non_linearity == "relu":
+        return gen_math_ops.maximum(A, 0.0)
+    elif non_linearity == "quantTanh":
+        return gen_math_ops.maximum(gen_math_ops.minimum(A, 1.0), -1.0)
+    elif non_linearity == "quantSigm":
+        A = (A + 1.0) / 2.0
+        return gen_math_ops.maximum(gen_math_ops.minimum(A, 1.0), 0.0)
+    else:
+        return math_ops.tanh(A)
+
+
+class FastGRNNCell(RNNCell):
+    '''
+    FastGRNN Cell with Both Full Rank and Low Rank Formulations
+    Has multiple activation functions for the gates
+    hidden_size = # hidden units
+
+    gate_non_linearity = nonlinearity for the gate can be chosen from
+    [tanh, sigmoid, relu, quantTanh, quantSigm]
+    update_non_linearity = nonlinearity for final rnn update
+    can be chosen from [tanh, sigmoid, relu, quantTanh, quantSigm]
+
+    wRank = rank of W matrix (creates two matrices if not None)
+    uRank = rank of U matrix (creates two matrices if not None)
+    zetaInit = init for zeta, the scale param
+    nuInit = init for nu, the translation param
+
+    FastGRNN architecture and compression techniques are found in
+    FastGRNN(LINK) paper
+
+    Basic architecture is like:
+
+    z_t = gate_nl(Wx_t + Uh_{t-1} + B_g)
+    h_t^ = update_nl(Wx_t + Uh_{t-1} + B_h)
+    h_t = z_t*h_{t-1} + (sigmoid(zeta)(1-z_t) + sigmoid(nu))*h_t^
+
+    W and U can further parameterised into low rank version by
+    W = matmul(W_1, W_2) and U = matmul(U_1, U_2)
+    '''
+
+    def __init__(self, hidden_size, gate_non_linearity="sigmoid",
+                 update_non_linearity="tanh", wRank=None, uRank=None,
+                 zetaInit=1.0, nuInit=-4.0, name="FastGRNN"):
+        super(FastGRNNCell, self).__init__()
+        self._hidden_size = hidden_size
+        self._gate_non_linearity = gate_non_linearity
+        self._update_non_linearity = update_non_linearity
+        self._num_weight_matrices = [1, 1]
+        self._wRank = wRank
+        self._uRank = uRank
+        self._zetaInit = zetaInit
+        self._nuInit = nuInit
+        if wRank is not None:
+            self._num_weight_matrices[0] += 1
+        if uRank is not None:
+            self._num_weight_matrices[1] += 1
+        self._name = name
+
+    @property
+    def state_size(self):
+        return self._hidden_size
+
+    @property
+    def output_size(self):
+        return self._hidden_size
+
+    @property
+    def gate_non_linearity(self):
+        return self._gate_non_linearity
+
+    @property
+    def update_non_linearity(self):
+        return self._update_non_linearity
+
+    @property
+    def wRank(self):
+        return self._wRank
+
+    @property
+    def uRank(self):
+        return self._uRank
+
+    @property
+    def num_weight_matrices(self):
+        return self._num_weight_matrices
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def cellType(self):
+        return "FastGRNN"
+
+    def call(self, inputs, state):
+        with vs.variable_scope(self._name + "/FastGRNNcell"):
+
+            if self._wRank is None:
+                W_matrix_init = init_ops.random_normal_initializer(
+                    mean=0.0, stddev=0.1, dtype=tf.float32)
+                self.W = vs.get_variable(
+                    "W", [inputs.get_shape()[-1], self._hidden_size],
+                    initializer=W_matrix_init)
+                wComp = math_ops.matmul(inputs, self.W)
+            else:
+                W_matrix_1_init = init_ops.random_normal_initializer(
+                    mean=0.0, stddev=0.1, dtype=tf.float32)
+                self.W1 = vs.get_variable(
+                    "W1", [inputs.get_shape()[-1], self._wRank],
+                    initializer=W_matrix_1_init)
+                W_matrix_2_init = init_ops.random_normal_initializer(
+                    mean=0.0, stddev=0.1, dtype=tf.float32)
+                self.W2 = vs.get_variable(
+                    "W2", [self._wRank, self._hidden_size],
+                    initializer=W_matrix_2_init)
+                wComp = math_ops.matmul(
+                    math_ops.matmul(inputs, self.W1), self.W2)
+
+            if self._uRank is None:
+                U_matrix_init = init_ops.random_normal_initializer(
+                    mean=0.0, stddev=0.1, dtype=tf.float32)
+                self.U = vs.get_variable(
+                    "U", [self._hidden_size, self._hidden_size],
+                    initializer=U_matrix_init)
+                uComp = math_ops.matmul(state, self.U)
+            else:
+                U_matrix_1_init = init_ops.random_normal_initializer(
+                    mean=0.0, stddev=0.1, dtype=tf.float32)
+                self.U1 = vs.get_variable(
+                    "U1", [self._hidden_size, self._uRank],
+                    initializer=U_matrix_1_init)
+                U_matrix_2_init = init_ops.random_normal_initializer(
+                    mean=0.0, stddev=0.1, dtype=tf.float32)
+                self.U2 = vs.get_variable(
+                    "U2", [self._uRank, self._hidden_size],
+                    initializer=U_matrix_2_init)
+                uComp = math_ops.matmul(
+                    math_ops.matmul(state, self.U1), self.U2)
+            # Init zeta to 6.0 and nu to -6.0 if this doesn't give good
+            # results. The inits are hyper-params.
+            zeta_init = init_ops.constant_initializer(
+                self._zetaInit, dtype=tf.float32)
+            self.zeta = vs.get_variable("zeta", [1, 1], initializer=zeta_init)
+
+            nu_init = init_ops.constant_initializer(
+                self._nuInit, dtype=tf.float32)
+            self.nu = vs.get_variable("nu", [1, 1], initializer=nu_init)
+
+            pre_comp = wComp + uComp
+
+            bias_gate_init = init_ops.constant_initializer(
+                1.0, dtype=tf.float32)
+            self.bias_gate = vs.get_variable(
+                "B_g", [1, self._hidden_size], initializer=bias_gate_init)
+            z = gen_non_linearity(pre_comp + self.bias_gate,
+                                  self._gate_non_linearity)
+
+            bias_update_init = init_ops.constant_initializer(
+                1.0, dtype=tf.float32)
+            self.bias_update = vs.get_variable(
+                "B_h", [1, self._hidden_size], initializer=bias_update_init)
+            c = gen_non_linearity(
+                pre_comp + self.bias_update, self._update_non_linearity)
+
+            new_h = z * state + (math_ops.sigmoid(self.zeta) * (1.0 - z) +
+                                 math_ops.sigmoid(self.nu)) * c
+        return new_h, new_h
+
+    def getVars(self):
+        Vars = []
+        if self._num_weight_matrices[0] == 1:
+            Vars.append(self.W)
+        else:
+            Vars.extend([self.W1, self.W2])
+
+        if self._num_weight_matrices[1] == 1:
+            Vars.append(self.U)
+        else:
+            Vars.extend([self.U1, self.U2])
+
+        Vars.extend([self.bias_gate, self.bias_update])
+        Vars.extend([self.zeta, self.nu])
+
+        return Vars
+
+
+
 FLAGS = tf.flags.FLAGS
 
 
@@ -32,14 +234,17 @@ def get_embeddings(hparams):
             initializer=initializer)
 
 
-def make_cell(dimension, residual, dropout):
-    cell = tf.nn.rnn_cell.LSTMCell(
-            dimension,
-            forget_bias=2.0,
-            use_peepholes=True,
-            state_is_tuple=True)
-    if dropout > 0:
-        cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=1-dropout)
+def make_cell(dimension, residual, keep_prob, fastGRNN):
+    if fastGRNN:
+        cell = FastGRNNCell(dimension)
+    else:
+        cell = tf.nn.rnn_cell.LSTMCell(
+                dimension,
+                forget_bias=2.0,
+                use_peepholes=True,
+                state_is_tuple=True)
+    if keep_prob < 1:
+        cell = tf.nn.rnn_cell.DropoutWrapper(cell, output_keep_prob=keep_prob)
     if residual:
         cell = tf.nn.rnn_cell.ResidualWrapper(cell)
     return cell
@@ -55,7 +260,9 @@ def dual_encoder_model(
         batch_size,
         bidirectional=False,
         attention=False,
-        feature_type="default"):
+        feature_type="default",
+        dssm=False,
+        tfidf=False,):
     # Initialize embeddings randomly or with pre-trained vectors if available
     embeddings_W = get_embeddings(hparams)
 
@@ -65,9 +272,6 @@ def dual_encoder_model(
     utterances_embedded = tf.nn.embedding_lookup(
         embeddings_W, utterances, name="embed_utterance")
 
-    # Set dropout and residual options
-    residual, dropout = False, 0
-
     # Calculate output embedding dimension
     M_dim = hparams.rnn_dim
     if bidirectional:
@@ -76,11 +280,11 @@ def dual_encoder_model(
     # Build the Context Encoder RNN
     with tf.variable_scope("context-rnn") as vs:
         # We use an LSTM Cell
-        cell_context = make_cell(hparams.rnn_dim, residual, dropout)
+        cell_context = make_cell(hparams.rnn_dim, hparams.residual, hparams.keep_rate, hparams.fastgrnn)
 
         if bidirectional:
             # Create cell for reverse direction
-            cell_context_reverse = make_cell(hparams.rnn_dim, residual, dropout)
+            cell_context_reverse = make_cell(hparams.rnn_dim, hparams.residual, hparams.keep_rate, hparams.fastgrnn)
 
             (context_encoded_outputs_f, context_encoded_outputs_b), (context_encoded_f, context_encoded_b) = tf.nn.bidirectional_dynamic_rnn(cell_context, 
                                                                             cell_context_reverse, context_embedded,
@@ -125,11 +329,11 @@ def dual_encoder_model(
     # Build the Utterance Encoder RNN
     with tf.variable_scope("utterance-rnn") as vs:
         # We use an LSTM Cell
-        cell_utterance = make_cell(hparams.rnn_dim, residual, dropout)
+        cell_utterance = make_cell(hparams.rnn_dim, hparams.residual, hparams.keep_rate, hparams.fastgrnn)
 
         # Construct reverse-direction cell if bidirectional architecture specified
         if bidirectional:
-            cell_utterance_reverse = make_cell(hparams.rnn_dim, residual, dropout)
+            cell_utterance_reverse = make_cell(hparams.rnn_dim, hparams.residual, hparams.keep_rate, hparams.fastgrnn)
 
         # Initialize CNN kernels if CNN-pooling specified
         if feature_type == "cnn":
@@ -183,6 +387,9 @@ def dual_encoder_model(
                             initializer=tf.truncated_normal_initializer())
         
         # "Predict" a  response: c * M
+
+        print("WOAH\n\n\n", context_encoded_outputs)
+
         generated_response = tf.matmul(context_encoded_feature, M) #[1], M) # using the hidden states
         generated_response = tf.expand_dims(generated_response, 1)
         all_utterances_encoded = tf.transpose(all_utterances_encoded, perm=[0, 2, 1]) # transpose last two dimensions

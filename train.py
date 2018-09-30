@@ -15,8 +15,8 @@ tf.flags.DEFINE_string("validation_in", None, "Path to validation data file")
 
 tf.flags.DEFINE_string("model_dir", None, "Directory to store model checkpoints")
 tf.flags.DEFINE_integer("loglevel", 20, "Tensorflow log level")
-tf.flags.DEFINE_integer("num_epochs", None, "Number of training Epochs. Defaults to indefinite.")
-tf.flags.DEFINE_integer("eval_every", 2000, "Evaluate after this many train steps")
+tf.flags.DEFINE_integer("num_epochs", 5, "Number of training Epochs. Defaults to indefinite.")
+tf.flags.DEFINE_integer("eval_every", 200, "Evaluate after this many train steps")
 
 FLAGS = tf.flags.FLAGS
 

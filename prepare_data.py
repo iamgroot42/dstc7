@@ -1,8 +1,11 @@
 import os
+import re
 
 import ijson
 import functools
 from tweetmotif.twokenize import tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer
+import _pickle as cPickle
 import tensorflow as tf
 
 tf.flags.DEFINE_integer(
@@ -12,18 +15,30 @@ tf.flags.DEFINE_integer("max_sentence_len", 160, "Maximum Sentence Length")
 
 tf.flags.DEFINE_string("train_in", None, "Path to input data file")
 tf.flags.DEFINE_string("validation_in", None, "Path to validation data file")
+tf.flags.DEFINE_string("tfidf_in", None, "Path to all utterances file")
 
 tf.flags.DEFINE_string("train_out", None, "Path to output train tfrecords file")
 tf.flags.DEFINE_string("validation_out", None, "Path to output validation tfrecords file")
+tf.flags.DEFINE_string("tfidf_out", None, "Path to output TFIDF vectorizer")
 
 tf.flags.DEFINE_string("vocab_path", None, "Path to save vocabulary txt file")
 tf.flags.DEFINE_string("vocab_processor", None, "Path to save vocabulary processor")
 tf.flags.DEFINE_boolean("has_dssm", False, "Does dataset have DSSM features?")
+tf.flags.DEFINE_boolean("use_tfidf", False, "Add TF-IDF features while constructing data?")
 
 FLAGS = tf.flags.FLAGS
 
 TRAIN_PATH = os.path.join(FLAGS.train_in)
 VALIDATION_PATH = os.path.join(FLAGS.validation_in)
+
+def read_all_lines(path):
+    lines = []
+    replace_urls = lambda text: re.sub(r'^https?:\/\/.*[\r\n]*', '__URL__', text, flags=re.MULTILINE)
+    with open(path, 'r') as f:
+        for line in f:
+            lines.append(replace_urls(line.rstrip()))
+    return lines
+
 
 def tokenizer_fn(iterator):
     return (x.split(" ") for x in iterator)
@@ -45,9 +60,6 @@ def process_dialog(dialog):
     speaker = None
     for msg in utterances:
         if speaker is None:
-            #print(msg['utterance'])
-            #print("-------------------------------")
-            #print(' '.join(tokenize(msg['utterance'])))
             context += ' '.join(tokenize(msg['utterance'])) + " __eou__ "
             speaker = msg['speaker']
         elif speaker != msg['speaker']:
@@ -100,11 +112,10 @@ def create_utterance_iter(input_iter):
     :return:
     """
     for row in input_iter:
-        if FLAGS.has_dssm:
-            row, _ = row
         all_utterances = []
-        context = row[0]
-        next_utterances = row[1:101]
+        replace_urls = lambda text: re.sub(r'^https?:\/\/.*[\r\n]*', '__URL__', text, flags=re.MULTILINE)
+        context = replace_urls(row[0][0])
+        next_utterances = [replace_urls(x) for x in row[0][1:101]]
         all_utterances.append(context)
         all_utterances.extend(next_utterances)
         for utterance in all_utterances:
@@ -130,7 +141,7 @@ def transform_sentence(sequence, vocab_processor):
     return next(vocab_processor.transform([sequence])).tolist()
 
 
-def create_example_new_format(row, vocab):
+def create_example_new_format(row, vocab, vectorizer=None):
     """
     Creates an example as a tensorflow.Example Protocol Buffer object.
     :param row:
@@ -139,6 +150,8 @@ def create_example_new_format(row, vocab):
     """
     if FLAGS.has_dssm:
         row, row_dssm = row
+    else:
+        row, _ = row
     context = row[0]
     next_utterances = row[1:101]
     target = row[-1]
@@ -152,7 +165,12 @@ def create_example_new_format(row, vocab):
     example.features.feature["context_len"].int64_list.value.extend([context_len])
     example.features.feature["target"].int64_list.value.extend([target])
     if FLAGS.has_dssm:
-        example.features.feature["context_dssm"].bytes_list.value.extend([row_dssm[0].encode('utf-8')])
+#        example.features.feature["context_dssm"].bytes_list.value.extend([row_dssm[0].encode('utf-8')])
+        example.features.feature["context_dssm"].float_list.value.extend([float(x) for x in row_dssm[0].split(',')])
+    if vectorizer:
+        context_features = vectorizer.transform([context]).todense()
+        print(context_features.shape)
+        example.features.feature["context_tfidf"].float_list.value.extend(context_features)
 
     # Distractor sequences
     for i, utterance in enumerate(next_utterances):
@@ -166,7 +184,8 @@ def create_example_new_format(row, vocab):
         opt_transformed = transform_sentence(utterance, vocab)
         example.features.feature[opt_key].int64_list.value.extend(opt_transformed)
         if FLAGS.has_dssm:
-            example.features.feature[opt_dssm_key].bytes_list.value.extend([row_dssm[i+1].encode('utf-8')])
+#            example.features.feature[opt_dssm_key].bytes_list.value.extend([row_dssm[i+1].encode('utf-8')])
+            example.features.feature[opt_dssm_key].float_list.value.extend([float(x) for x in row_dssm[i+1].split(',')])
     return example
 
 
@@ -197,6 +216,14 @@ def write_vocabulary(vocab_processor, outfile):
 
 
 if __name__ == "__main__":
+    vectorizer = None
+    if FLAGS.use_tfidf:
+        assert FLAGS.tfidf_in is not None and FLAGS.tfidf_out is not None
+        print("Creating TF-IDF vectorizer")
+        lines = read_all_lines(FLAGS.tfidf_in)
+        vectorizer = TfidfVectorizer(input='content', ngram_range=(1,3), stop_words ='english', sublinear_tf=True, max_features=10000,)
+        with open(FLAGS.tfidf_out, 'wb') as tfidfFile:
+            cPickle.dump(vectorizer, tfidfFile)
     print("Creating vocabulary...")
     input_iter = create_dialog_iter(TRAIN_PATH)
     input_iter = create_utterance_iter(input_iter)
@@ -214,10 +241,10 @@ if __name__ == "__main__":
     create_tfrecords_file(
         input_filename=TRAIN_PATH,
         output_filename=os.path.join(FLAGS.train_out),
-        example_fn=functools.partial(create_example_new_format, vocab=vocab))
+        example_fn=functools.partial(create_example_new_format, vocab=vocab, vectorizer=vectorizer))
 
     # Create validation.tfrecords
     create_tfrecords_file(
         input_filename=VALIDATION_PATH,
         output_filename=os.path.join(FLAGS.validation_out),
-        example_fn=functools.partial(create_example_new_format, vocab=vocab))
+        example_fn=functools.partial(create_example_new_format, vocab=vocab, vectorizer=vectorizer))

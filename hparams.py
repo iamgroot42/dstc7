@@ -29,7 +29,11 @@ tf.flags.DEFINE_string("feature_type", "default", "Use last state(default), mean
     sum of states(sum), cnn(cnn) or maxpool(max)?")
 tf.flags.DEFINE_bool("staircase", False, "Staircase decay")
 tf.flags.DEFINE_bool("bidirectional", False, "Use bidirectional LSTM?")
+tf.flags.DEFINE_bool("residual", False, "Use residual connections?")
+tf.flags.DEFINE_bool("fastgrnn", False, "Use FastGRNN cell instead of LSTM?")
 tf.flags.DEFINE_bool("attention", False, "Use attention for alignment?")
+tf.flags.DEFINE_bool("dssm", False, "Use DSSM features?")
+tf.flags.DEFINE_bool("tfidf", False, "Use TF-IDF features?")
 
 FLAGS = tf.flags.FLAGS
 
@@ -54,6 +58,10 @@ HParams = namedtuple(
         "bidirectional",
         "attention",
         "feature_type",
+        "dssm",
+        "tfidf",
+        "residual",
+        "fastgrnn",
     ])
 
 
@@ -77,4 +85,8 @@ def create_hparams():
         bidirectional=FLAGS.bidirectional,
         attention=FLAGS.attention,
         feature_type=FLAGS.feature_type,
+        dssm=FLAGS.dssm,
+        tfidf=FLAGS.dssm,
+        residual=FLAGS.residual,
+        fastgrnn=FLAGS.fastgrnn,
     )

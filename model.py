@@ -51,7 +51,9 @@ def create_model_fn(hparams, model_impl):
                 hparams.batch_size,
                 hparams.bidirectional,
                 hparams.attention,
-                hparams.feature_type,)
+                hparams.feature_type,
+                hparams.dssm,
+                hparams.tfidf,)
             train_op = create_train_op(loss, hparams)
             return probs, loss, train_op
 
@@ -68,7 +70,9 @@ def create_model_fn(hparams, model_impl):
                 hparams.eval_batch_size,
                 hparams.bidirectional,
                 hparams.attention,
-                hparams.feature_type,)
+                hparams.feature_type,
+                hparams.dssm,
+                hparams.tfidf,)
 
             split_probs = tf.split(0, features["len"], probs)
             probs = tf.concat(1, split_probs)
@@ -87,7 +91,9 @@ def create_model_fn(hparams, model_impl):
                 hparams.eval_batch_size,
                 hparams.bidirectional,
                 hparams.attention,
-                hparams.feature_type,)
+                hparams.feature_type,
+                hparams.dssm,
+                hparams.tfidf,)
 
             shaped_probs = probs
 

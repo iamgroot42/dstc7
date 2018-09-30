@@ -1,8 +1,9 @@
 import tensorflow as tf
 
 TEXT_FEATURE_SIZE = 160
+CDSSM_DIM = 300
 
-def get_feature_columns(mode):
+def get_feature_columns(mode, has_dssm):
     feature_columns = []
 
     feature_columns.append(tf.contrib.layers.real_valued_column(
@@ -13,11 +14,18 @@ def get_feature_columns(mode):
     feature_columns.append(tf.contrib.layers.real_valued_column(
         column_name="target", dimension=1, dtype=tf.int64))
 
+    if has_dssm:
+        feature_columns.append(tf.contrib.layers.real_valued_column(
+            column_name="context_dssm", dimension=CDSSM_DIM, dtype=tf.float32))
+
     for i in range(100):
         feature_columns.append(tf.contrib.layers.real_valued_column(
             column_name="option_{}".format(i), dimension=TEXT_FEATURE_SIZE, dtype=tf.int64))
         feature_columns.append(tf.contrib.layers.real_valued_column(
             column_name="option_{}_len".format(i), dimension=1, dtype=tf.int64))
+        if has_dssm:
+            feature_columns.append(tf.contrib.layers.real_valued_column(
+                column_name="option_{}_dssm".format(i), dimension=CDSSM_DIM, dtype=tf.float32))
 
     return set(feature_columns)
 
