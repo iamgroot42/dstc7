@@ -20,9 +20,10 @@ tf.flags.DEFINE_string("vocab_path", None, "Path to vocabulary.txt file")
 # Training Parameters
 tf.flags.DEFINE_float("learning_rate", 0.001, "Learning rate")
 tf.flags.DEFINE_float("keep_rate", 1.0, "Drop out probability")
-tf.flags.DEFINE_float("decay_rate", 0.95, "Exponential decay rate")
+tf.flags.DEFINE_float("decay_rate", 0.65, "Exponential decay rate")
+tf.flags.DEFINE_integer("factorization", -1, "Dimension for matrix multiplication factorization at last step")
 tf.flags.DEFINE_integer("batch_size", 16, "Batch size during training")
-tf.flags.DEFINE_integer("eval_batch_size", 20, "Batch size during evaluation")
+tf.flags.DEFINE_integer("eval_batch_size", 32, "Batch size during evaluation")
 tf.flags.DEFINE_integer("decay_steps", 5000, "Decay steps")
 tf.flags.DEFINE_string("optimizer", "Adam", "Optimizer Name (Adam, Adagrad, etc)")
 tf.flags.DEFINE_string("feature_type", "default", "Use last state(default), mean of states(mean), \
@@ -62,6 +63,7 @@ HParams = namedtuple(
         "tfidf",
         "residual",
         "fastgrnn",
+        "factorization",
     ])
 
 
@@ -89,4 +91,5 @@ def create_hparams():
         tfidf=FLAGS.dssm,
         residual=FLAGS.residual,
         fastgrnn=FLAGS.fastgrnn,
+        factorization=FLAGS.factorization,
     )

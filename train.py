@@ -53,20 +53,22 @@ def main(unused_argv):
         mode=tf.contrib.learn.ModeKeys.TRAIN,
         input_files=[TRAIN_FILE],
         batch_size=hyper_params.batch_size,
-        num_epochs=FLAGS.num_epochs)
+        num_epochs=FLAGS.num_epochs,
+        has_dssm=hyper_params.dssm,)
 
     input_fn_eval = inputs.create_input_fn(
         mode=tf.contrib.learn.ModeKeys.EVAL,
         input_files=[VALIDATION_FILE],
         batch_size=hyper_params.eval_batch_size,
-        num_epochs=1)
+        num_epochs=1,
+        has_dssm=hyper_params.dssm,)
 
     eval_metrics = metrics.create_evaluation_metrics()
 
     eval_monitor = tf.contrib.learn.monitors.ValidationMonitor(
         input_fn=input_fn_eval,
         every_n_steps=FLAGS.eval_every,
-        metrics=eval_metrics)
+        metrics=eval_metrics,)
 
     estimator.fit(input_fn=input_fn_train, steps=None, monitors=[eval_monitor])
 

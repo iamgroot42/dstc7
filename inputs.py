@@ -17,7 +17,6 @@ def get_feature_columns(mode, has_dssm):
     if has_dssm:
         feature_columns.append(tf.contrib.layers.real_valued_column(
             column_name="context_dssm", dimension=CDSSM_DIM, dtype=tf.float32))
-
     for i in range(100):
         feature_columns.append(tf.contrib.layers.real_valued_column(
             column_name="option_{}".format(i), dimension=TEXT_FEATURE_SIZE, dtype=tf.int64))
@@ -26,14 +25,13 @@ def get_feature_columns(mode, has_dssm):
         if has_dssm:
             feature_columns.append(tf.contrib.layers.real_valued_column(
                 column_name="option_{}_dssm".format(i), dimension=CDSSM_DIM, dtype=tf.float32))
-
     return set(feature_columns)
 
 
-def create_input_fn(mode, input_files, batch_size, num_epochs):
+def create_input_fn(mode, input_files, batch_size, num_epochs, has_dssm):
     def input_fn():
         features = tf.contrib.layers.create_feature_spec_for_parsing(
-            get_feature_columns(mode))
+            get_feature_columns(mode, has_dssm))
 
         feature_map = tf.contrib.learn.io.read_batch_features(
             file_pattern=input_files,

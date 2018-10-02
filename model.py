@@ -1,11 +1,11 @@
 import tensorflow as tf
 
 
-def get_id_feature(features, key, len_key, max_len):
+def get_id_feature(features, key, len_key, max_len, dssm_key):
     ids = features[key]
     ids_len = tf.squeeze(features[len_key], [1])
     ids_len = tf.minimum(ids_len, tf.constant(max_len, dtype=tf.int64))
-    return ids, ids_len
+    return ids, ids_len, features.get(dssm_key, None)
 
 
 def create_train_op(loss, hparams):
@@ -16,7 +16,7 @@ def create_train_op(loss, hparams):
         loss=loss,
         global_step=tf.contrib.framework.get_global_step(),
         learning_rate=hparams.learning_rate,
-        clip_gradients=10.0,
+        clip_gradients=3.0,
         optimizer=hparams.optimizer,
         learning_rate_decay_fn=exp_decay
     )
@@ -25,20 +25,26 @@ def create_train_op(loss, hparams):
 
 def create_model_fn(hparams, model_impl):
     def model_fn(features, targets, mode):
-        context, context_len = get_id_feature(
-            features, "context", "context_len", hparams.max_context_len)
+        context, context_len, context_dssm = get_id_feature(
+            features, "context", "context_len", hparams.max_context_len, "context_dssm")
 
         all_utterances = []
         all_utterances_lens = []
+        all_utterances_dssm = []
 
         for i in range(100):
-            option, option_len = get_id_feature(features,
+            option, option_len, option_dssm = get_id_feature(features,
                                                 "option_{}".format(i),
                                                 "option_{}_len".format(i),
-                                                hparams.max_utterance_len)
+                                                hparams.max_utterance_len,
+                                                "option_{}_dssm".format(i),)
             all_utterances.append(option)
             all_utterances_lens.append(option_len)
+            all_utterances_dssm.append(option_dssm)
 
+        dssm_object = None
+        if hparams.dssm:
+            dssm_object = (context_dssm, all_utterances_dssm)
         if mode == tf.contrib.learn.ModeKeys.TRAIN:
             probs, loss = model_impl(
                 hparams,
@@ -52,7 +58,7 @@ def create_model_fn(hparams, model_impl):
                 hparams.bidirectional,
                 hparams.attention,
                 hparams.feature_type,
-                hparams.dssm,
+                dssm_object,
                 hparams.tfidf,)
             train_op = create_train_op(loss, hparams)
             return probs, loss, train_op
@@ -71,7 +77,7 @@ def create_model_fn(hparams, model_impl):
                 hparams.bidirectional,
                 hparams.attention,
                 hparams.feature_type,
-                hparams.dssm,
+                dssm_object,
                 hparams.tfidf,)
 
             split_probs = tf.split(0, features["len"], probs)
@@ -92,7 +98,7 @@ def create_model_fn(hparams, model_impl):
                 hparams.bidirectional,
                 hparams.attention,
                 hparams.feature_type,
-                hparams.dssm,
+                dssm_object,
                 hparams.tfidf,)
 
             shaped_probs = probs

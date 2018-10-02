@@ -261,7 +261,7 @@ def dual_encoder_model(
         bidirectional=False,
         attention=False,
         feature_type="default",
-        dssm=False,
+        dssm=None,
         tfidf=False,):
     # Initialize embeddings randomly or with pre-trained vectors if available
     embeddings_W = get_embeddings(hparams)
@@ -276,6 +276,10 @@ def dual_encoder_model(
     M_dim = hparams.rnn_dim
     if bidirectional:
         M_dim *= 2
+
+    # Extract DSSM features if given
+    if dssm:
+        (context_dssm, utterances_dssm) = dssm
 
     # Build the Context Encoder RNN
     with tf.variable_scope("context-rnn") as vs:
@@ -377,20 +381,41 @@ def dual_encoder_model(
             else:
                 utterance_encoded_feature = temp_states[1]
 
+            # Use DSSM features if available
+            if dssm:
+                utterances_dssm_use = tf.stack([utterances_dssm[j][i] for j in range(100)])
+                utterance_encoded_feature = tf.concat([utterances_dssm_use, utterance_encoded_feature], -1)
+
             all_utterances_encoded.append(utterance_encoded_feature) # since it's a tuple, use the hidden states
 
         all_utterances_encoded = tf.stack(all_utterances_encoded, axis=0)
 
     with tf.variable_scope("prediction") as vs:
-        M = tf.get_variable("M",
-                            shape=[M_dim, M_dim],
-                            initializer=tf.truncated_normal_initializer())
+        if hparams.factorization != -1:
+            M1 = tf.get_variable("M_1",
+                                shape=[M_dim, self.hparams.factorization],
+                                initializer=tf.truncated_normal_initializer())
+            M2 = tf.get_variable("M_2",
+                                shape=[self.hparams.factorization, M_dim],
+                                initializer=tf.truncated_normal_initializer()) 
+            # "Predict" an intermediate response: c * M1
+            intermediate_generated_response = tf.matmul(context_encoded_feature, M1)
+            # "Predict" a  response: (c * M1) * M2
+            generated_response = tf.matmul(intermediate_generated_response, M2)
+        else:
+            # Concat DSSM embedding if available
+            if dssm:
+                context_encoded_feature = tf.concat([context_dssm, context_encoded_feature], -1)
+                M_dim += context_dssm.shape[1]
+
+            # Create matrix M
+            M = tf.get_variable("M",
+                                shape=[M_dim, M_dim],
+                                initializer=tf.truncated_normal_initializer())
         
-        # "Predict" a  response: c * M
+            # "Predict" a  response: c * M
+            generated_response = tf.matmul(context_encoded_feature, M)
 
-        print("WOAH\n\n\n", context_encoded_outputs)
-
-        generated_response = tf.matmul(context_encoded_feature, M) #[1], M) # using the hidden states
         generated_response = tf.expand_dims(generated_response, 1)
         all_utterances_encoded = tf.transpose(all_utterances_encoded, perm=[0, 2, 1]) # transpose last two dimensions
 
