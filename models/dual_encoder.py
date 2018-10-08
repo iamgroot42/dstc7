@@ -419,7 +419,7 @@ def dual_encoder_model(
         logits = tf.matmul(generated_response, all_utterances_encoded)
         logits = tf.squeeze(logits, [1])
 
-        if lcs:
+        if lcs[0]:
             lcs_combined = tf.concat([tf.stack(lcs, axis=1), tf.expand_dims(logits, -1)], -1)
             logits = tf.squeeze(tf.layers.dense(lcs_combined, 1, name="logits_with_lcs"), -1)
 

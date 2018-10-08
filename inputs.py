@@ -31,7 +31,7 @@ def get_feature_columns(mode, has_dssm, has_lcs):
     return set(feature_columns)
 
 
-def create_input_fn(mode, input_files, batch_size, num_epochs, has_dssm, has_lcs):
+def create_input_fn(mode, input_files, batch_size, num_epochs, has_dssm, has_lcs, randomize=True):
     def input_fn():
         features = tf.contrib.layers.create_feature_spec_for_parsing(
             get_feature_columns(mode, has_dssm, has_lcs))
@@ -41,7 +41,7 @@ def create_input_fn(mode, input_files, batch_size, num_epochs, has_dssm, has_lcs
             batch_size=batch_size,
             features=features,
             reader=tf.TFRecordReader,
-            randomize_input=True,
+            randomize_input=randomize,
             num_epochs=num_epochs,
             queue_capacity=200000 + batch_size * 10,
             name="read_batch_features_{}".format(mode))

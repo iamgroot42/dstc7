@@ -70,10 +70,10 @@ def create_model_fn(hparams, model_impl):
             probs, loss = model_impl(
                 hparams,
                 mode,
-                tf.concat(0, context),
-                tf.concat(0, context_len),
-                tf.concat(0, all_utterances),
-                tf.concat(0, all_utterances_lens),
+                context,
+                context_len,
+                all_utterances,
+                tf.transpose(tf.stack(all_utterances_lens, axis=0)),
                 None,
                 hparams.eval_batch_size,
                 hparams.bidirectional,
@@ -81,9 +81,6 @@ def create_model_fn(hparams, model_impl):
                 hparams.feature_type,
                 dssm_object,
                 all_utterances_lcs,)
-
-            split_probs = tf.split(0, features["len"], probs)
-            probs = tf.concat(1, split_probs)
 
             return probs, 0.0, None
 

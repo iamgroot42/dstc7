@@ -24,6 +24,7 @@ tf.flags.DEFINE_boolean("vocab_exists", False, "Does vocabulary processor alread
 tf.flags.DEFINE_boolean("validation_exists", False, "Does validation .tfrecords file already exist?")
 tf.flags.DEFINE_boolean("has_dssm", False, "Does dataset have DSSM features?")
 tf.flags.DEFINE_boolean("has_lcs", False, "Does dataset have LCS based features?")
+tf.flags.DEFINE_boolean("infer_mode", False, "Inference mode while generating data?")
 
 FLAGS = tf.flags.FLAGS
 
@@ -41,7 +42,7 @@ def tokenizer_fn(iterator):
     return (x.split(" ") for x in iterator)
 
 
-def process_dialog(dialog):
+def process_dialog(dialog, infer_mode):
     """
     Add EOU and EOT tags between utterances and create a single context string.
     :param dialog:
@@ -73,9 +74,15 @@ def process_dialog(dialog):
         dssm_row.append(dialog['dssm'])
 
     # Create the next utterance options and the target label
-    correct_answer = dialog['options-for-correct-answers'][0]
-    target_id = correct_answer['candidate-id']
+    target_id = None
     target_index = None
+    try:
+        correct_answer = dialog['options-for-correct-answers'][0]
+        target_id = correct_answer['candidate-id']
+    except:
+        if not infer_mode:
+            print('options-for-correct-answers missing from dialog')
+        target_id = -1
     for i, utterance in enumerate(dialog['options-for-next']):
         if utterance['candidate-id'] == target_id:
             target_index = i
@@ -85,14 +92,16 @@ def process_dialog(dialog):
         if FLAGS.has_lcs:
             lcs_row.append([float(utterance['LCS']), float(utterance['LCSWord']), float(utterance['WordOverlap'])])
     if target_index is None:
-        print('Correct answer not found in options-for-next - example {}. Setting 0 as the correct index'.format(dialog['example-id']))
+        if not infer_mode:
+            print('Correct answer not found in options-for-next - example {}. Setting 0 as the correct index'.format(dialog['example-id']))
+        row.append(0)
     else:
         row.append(target_index)
 
     return (row, dssm_row, lcs_row)
 
 
-def create_dialog_iter(filename):
+def create_dialog_iter(filename, infer_mode):
     """
     Returns an iterator over a JSON file.
     :param filename:
@@ -101,7 +110,7 @@ def create_dialog_iter(filename):
     with open(filename, 'rb') as f:
         json_data = ijson.items(f, 'item')
         for entry in json_data:
-            row = process_dialog(entry)
+            row = process_dialog(entry, infer_mode)
             yield row
 
 def create_utterance_iter(input_iter):
@@ -190,14 +199,14 @@ def create_example_new_format(row, vocab):
     return example
 
 
-def create_tfrecords_file(input_filename, output_filename, example_fn):
+def create_tfrecords_file(input_filename, output_filename, example_fn, infer_mode):
     """
     Creates a TFRecords file for the given input data and
     example transofmration function
     """
     writer = tf.python_io.TFRecordWriter(output_filename)
     print("Creating TFRecords file at {}...".format(output_filename))
-    for i, row in enumerate(create_dialog_iter(input_filename)):
+    for i, row in enumerate(create_dialog_iter(input_filename, infer_mode)):
         x = example_fn(row)
         writer.write(x.SerializeToString())
     writer.close()
@@ -218,7 +227,7 @@ def write_vocabulary(vocab_processor, outfile):
 
 if __name__ == "__main__":
     TRAIN_PATH = os.path.join(FLAGS.train_in)
-    input_iter = create_dialog_iter(TRAIN_PATH)
+    input_iter = create_dialog_iter(TRAIN_PATH, FLAGS.infer_mode)
     input_iter = create_utterance_iter(input_iter)
     vocab = False
     if FLAGS.vocab_exists:
@@ -241,7 +250,8 @@ if __name__ == "__main__":
     create_tfrecords_file(
         input_filename=TRAIN_PATH,
         output_filename=os.path.join(FLAGS.train_out),
-        example_fn=functools.partial(create_example_new_format, vocab=vocab))
+        example_fn=functools.partial(create_example_new_format, vocab=vocab),
+        infer_mode=FLAGS.infer_mode)
 
     if not FLAGS.validation_exists:
         # Create validation.tfrecords
@@ -249,4 +259,5 @@ if __name__ == "__main__":
         create_tfrecords_file(
             input_filename=VALIDATION_PATH,
             output_filename=os.path.join(FLAGS.validation_out),
-            example_fn=functools.partial(create_example_new_format, vocab=vocab))
+            example_fn=functools.partial(create_example_new_format, vocab=vocab),
+            infer_mode=FLAGS.infer_mode)
