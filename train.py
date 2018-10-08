@@ -54,14 +54,16 @@ def main(unused_argv):
         input_files=[TRAIN_FILE],
         batch_size=hyper_params.batch_size,
         num_epochs=FLAGS.num_epochs,
-        has_dssm=hyper_params.dssm,)
+        has_dssm=hyper_params.dssm,
+        has_lcs=hyper_params.lcs,)
 
     input_fn_eval = inputs.create_input_fn(
         mode=tf.contrib.learn.ModeKeys.EVAL,
         input_files=[VALIDATION_FILE],
         batch_size=hyper_params.eval_batch_size,
         num_epochs=1,
-        has_dssm=hyper_params.dssm,)
+        has_dssm=hyper_params.dssm,
+        has_lcs=hyper_params.lcs,)
 
     eval_metrics = metrics.create_evaluation_metrics()
 

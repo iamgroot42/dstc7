@@ -7,7 +7,6 @@ from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops.rnn_cell_impl import RNNCell
 
-
 def gen_non_linearity(A, non_linearity):
     '''
     Returns required activation for a tensor based on the inputs
@@ -262,7 +261,7 @@ def dual_encoder_model(
         attention=False,
         feature_type="default",
         dssm=None,
-        tfidf=False,):
+        lcs=None,):
     # Initialize embeddings randomly or with pre-trained vectors if available
     embeddings_W = get_embeddings(hparams)
 
@@ -290,7 +289,7 @@ def dual_encoder_model(
             # Create cell for reverse direction
             cell_context_reverse = make_cell(hparams.rnn_dim, hparams.residual, hparams.keep_rate, hparams.fastgrnn)
 
-            (context_encoded_outputs_f, context_encoded_outputs_b), (context_encoded_f, context_encoded_b) = tf.nn.bidirectional_dynamic_rnn(cell_context, 
+            (context_encoded_outputs_f, context_encoded_outputs_b), (context_encoded_f, context_encoded_b) = tf.nn.bidirectional_dynamic_rnn(cell_context,
                                                                             cell_context_reverse, context_embedded,
                                                                             context_len, dtype=tf.float32)
             context_encoded_outputs = tf.concat([context_encoded_outputs_f, context_encoded_outputs_b], -1)
@@ -300,10 +299,8 @@ def dual_encoder_model(
             context_encoded_outputs, context_encoded = tf.nn.dynamic_rnn(cell_context, context_embedded,
                                                                             context_len, dtype=tf.float32)
 
-        # Use last state / sum of states / maxpool of states
-        if feature_type == "sum":
-            context_encoded_feature = tf.reduce_sum(context_encoded_outputs, 1)
-        elif feature_type == "mean":
+        # Use last state / mean of states / maxpool of states
+        if feature_type == "mean":
             context_encoded_feature = tf.reduce_mean(context_encoded_outputs, 1)
         elif feature_type == "max":
             context_encoded_feature = tf.reduce_max(context_encoded_outputs, 1)
@@ -363,16 +360,14 @@ def dual_encoder_model(
 
             # Modify using attention (if specified):
             if attention:
-                assert feature_type in ["sum", "mean", "max", "cnn"] 
+                assert feature_type in ["mean", "max", "cnn"]
                 m_aq = tf.tanh(tf.add(tf.map_fn(lambda x: tf.matmul(x, W_am), temp_outputs),
                     tf.matmul(tf.expand_dims(context_encoded_feature[i], 0), W_qm)))
                 s_aq = tf.nn.softmax(tf.map_fn(lambda x: tf.matmul(x, w_ms), m_aq))
                 temp_outputs = tf.multiply(temp_outputs, s_aq)
 
-            # Use last state / sum of states / maxpool of states
-            if feature_type == "sum":
-                utterance_encoded_feature = tf.reduce_sum(temp_outputs, 1)
-            elif feature_type == "mean":
+            # Use last state / mean of states / maxpool of states
+            if feature_type == "mean":
                 utterance_encoded_feature = tf.reduce_mean(temp_outputs, 1)
             elif feature_type == "max":
                 utterance_encoded_feature = tf.reduce_max(temp_outputs, 1)
@@ -383,7 +378,7 @@ def dual_encoder_model(
 
             # Use DSSM features if available
             if dssm:
-                utterances_dssm_use = tf.stack([utterances_dssm[j][i] for j in range(100)])
+                utterances_dssm_use = tf.stack([utterances_dssm[j][i] for j in range(utterance_encoded_feature.shape[0])])
                 utterance_encoded_feature = tf.concat([utterances_dssm_use, utterance_encoded_feature], -1)
 
             all_utterances_encoded.append(utterance_encoded_feature) # since it's a tuple, use the hidden states
@@ -393,11 +388,11 @@ def dual_encoder_model(
     with tf.variable_scope("prediction") as vs:
         if hparams.factorization != -1:
             M1 = tf.get_variable("M_1",
-                                shape=[M_dim, self.hparams.factorization],
+                                shape=[M_dim, hparams.factorization],
                                 initializer=tf.truncated_normal_initializer())
             M2 = tf.get_variable("M_2",
-                                shape=[self.hparams.factorization, M_dim],
-                                initializer=tf.truncated_normal_initializer()) 
+                                shape=[hparams.factorization, M_dim],
+                                initializer=tf.truncated_normal_initializer())
             # "Predict" an intermediate response: c * M1
             intermediate_generated_response = tf.matmul(context_encoded_feature, M1)
             # "Predict" a  response: (c * M1) * M2
@@ -412,7 +407,7 @@ def dual_encoder_model(
             M = tf.get_variable("M",
                                 shape=[M_dim, M_dim],
                                 initializer=tf.truncated_normal_initializer())
-        
+
             # "Predict" a  response: c * M
             generated_response = tf.matmul(context_encoded_feature, M)
 
@@ -423,6 +418,10 @@ def dual_encoder_model(
         # (c * M) * r
         logits = tf.matmul(generated_response, all_utterances_encoded)
         logits = tf.squeeze(logits, [1])
+
+        if lcs:
+            lcs_combined = tf.concat([tf.stack(lcs, axis=1), tf.expand_dims(logits, -1)], -1)
+            logits = tf.squeeze(tf.layers.dense(lcs_combined, 1, name="logits_with_lcs"), -1)
 
         # Apply sigmoid to convert logits to probabilities
         probs = tf.nn.softmax(logits)

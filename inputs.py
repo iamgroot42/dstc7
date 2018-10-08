@@ -3,7 +3,7 @@ import tensorflow as tf
 TEXT_FEATURE_SIZE = 160
 CDSSM_DIM = 300
 
-def get_feature_columns(mode, has_dssm):
+def get_feature_columns(mode, has_dssm, has_lcs):
     feature_columns = []
 
     feature_columns.append(tf.contrib.layers.real_valued_column(
@@ -25,13 +25,16 @@ def get_feature_columns(mode, has_dssm):
         if has_dssm:
             feature_columns.append(tf.contrib.layers.real_valued_column(
                 column_name="option_{}_dssm".format(i), dimension=CDSSM_DIM, dtype=tf.float32))
+        if has_lcs:
+            feature_columns.append(tf.contrib.layers.real_valued_column(
+                column_name="option_{}_lcs".format(i), dimension=3, dtype=tf.float32))
     return set(feature_columns)
 
 
-def create_input_fn(mode, input_files, batch_size, num_epochs, has_dssm):
+def create_input_fn(mode, input_files, batch_size, num_epochs, has_dssm, has_lcs):
     def input_fn():
         features = tf.contrib.layers.create_feature_spec_for_parsing(
-            get_feature_columns(mode, has_dssm))
+            get_feature_columns(mode, has_dssm, has_lcs))
 
         feature_map = tf.contrib.learn.io.read_batch_features(
             file_pattern=input_files,

@@ -4,32 +4,29 @@ import re
 import ijson
 import functools
 from tweetmotif.twokenize import tokenize
-from sklearn.feature_extraction.text import TfidfVectorizer
-import _pickle as cPickle
 import tensorflow as tf
 
 tf.flags.DEFINE_integer(
-    "min_word_frequency", 1, "Minimum frequency of words in the vocabulary")
+    "min_word_frequency", 4, "Minimum frequency of words in the vocabulary")
 
 tf.flags.DEFINE_integer("max_sentence_len", 160, "Maximum Sentence Length")
 
 tf.flags.DEFINE_string("train_in", None, "Path to input data file")
 tf.flags.DEFINE_string("validation_in", None, "Path to validation data file")
-tf.flags.DEFINE_string("tfidf_in", None, "Path to all utterances file")
 
 tf.flags.DEFINE_string("train_out", None, "Path to output train tfrecords file")
 tf.flags.DEFINE_string("validation_out", None, "Path to output validation tfrecords file")
-tf.flags.DEFINE_string("tfidf_out", None, "Path to output TFIDF vectorizer")
 
 tf.flags.DEFINE_string("vocab_path", None, "Path to save vocabulary txt file")
 tf.flags.DEFINE_string("vocab_processor", None, "Path to save vocabulary processor")
+
+tf.flags.DEFINE_boolean("vocab_exists", False, "Does vocabulary processor already exist?")
+tf.flags.DEFINE_boolean("validation_exists", False, "Does validation .tfrecords file already exist?")
 tf.flags.DEFINE_boolean("has_dssm", False, "Does dataset have DSSM features?")
-tf.flags.DEFINE_boolean("use_tfidf", False, "Add TF-IDF features while constructing data?")
+tf.flags.DEFINE_boolean("has_lcs", False, "Does dataset have LCS based features?")
 
 FLAGS = tf.flags.FLAGS
 
-TRAIN_PATH = os.path.join(FLAGS.train_in)
-VALIDATION_PATH = os.path.join(FLAGS.validation_in)
 
 def read_all_lines(path):
     lines = []
@@ -53,6 +50,7 @@ def process_dialog(dialog):
 
     row = []
     dssm_row = []
+    lcs_row = []
     utterances = dialog['messages-so-far']
 
     # Create the context
@@ -84,13 +82,14 @@ def process_dialog(dialog):
         row.append(' '.join(tokenize(utterance['utterance'])) + " __eou__ ")
         if FLAGS.has_dssm:
             dssm_row.append(utterance['dssm'])
-
+        if FLAGS.has_lcs:
+            lcs_row.append([float(utterance['LCS']), float(utterance['LCSWord']), float(utterance['WordOverlap'])])
     if target_index is None:
         print('Correct answer not found in options-for-next - example {}. Setting 0 as the correct index'.format(dialog['example-id']))
     else:
         row.append(target_index)
 
-    return (row, dssm_row)
+    return (row, dssm_row, lcs_row)
 
 
 def create_dialog_iter(filename):
@@ -121,7 +120,7 @@ def create_utterance_iter(input_iter):
         for utterance in all_utterances:
             yield utterance
 
-def create_vocab(input_iter, min_frequency):
+def create_vocab(input_iter, min_frequency, create=False):
     """
     Creates and returns a VocabularyProcessor object with the vocabulary
     for the input iterator.
@@ -130,7 +129,8 @@ def create_vocab(input_iter, min_frequency):
         FLAGS.max_sentence_len,
         min_frequency=min_frequency,
         tokenizer_fn=tokenizer_fn)
-    vocab_processor.fit(input_iter)
+    if create:
+        vocab_processor.fit(input_iter)
     return vocab_processor
 
 
@@ -141,17 +141,21 @@ def transform_sentence(sequence, vocab_processor):
     return next(vocab_processor.transform([sequence])).tolist()
 
 
-def create_example_new_format(row, vocab, vectorizer=None):
+def create_example_new_format(row, vocab):
     """
     Creates an example as a tensorflow.Example Protocol Buffer object.
     :param row:
     :param vocab:
     :return:
     """
-    if FLAGS.has_dssm:
-        row, row_dssm = row
+    if FLAGS.has_dssm and FLAGS.has_lcs:
+        row, row_dssm, row_lcs = row
+    elif FLAGS.has_dssm:
+        row, row_dssm, _ = row
+    elif FLAGS.has_lcs:
+        row, _, row_lcs = row
     else:
-        row, _ = row
+        row, _, _ = row
     context = row[0]
     next_utterances = row[1:101]
     target = row[-1]
@@ -165,18 +169,14 @@ def create_example_new_format(row, vocab, vectorizer=None):
     example.features.feature["context_len"].int64_list.value.extend([context_len])
     example.features.feature["target"].int64_list.value.extend([target])
     if FLAGS.has_dssm:
-#        example.features.feature["context_dssm"].bytes_list.value.extend([row_dssm[0].encode('utf-8')])
         example.features.feature["context_dssm"].float_list.value.extend([float(x) for x in row_dssm[0].split(',')])
-    if vectorizer:
-        context_features = vectorizer.transform([context]).todense()
-        print(context_features.shape)
-        example.features.feature["context_tfidf"].float_list.value.extend(context_features)
 
     # Distractor sequences
     for i, utterance in enumerate(next_utterances):
         opt_key = "option_{}".format(i)
         opt_len_key = "option_{}_len".format(i)
         opt_dssm_key = "option_{}_dssm".format(i)
+        opt_lcs_key = "option_{}_lcs".format(i)
         # Utterance Length Feature
         opt_len = len(next(vocab._tokenizer([utterance])))
         example.features.feature[opt_len_key].int64_list.value.extend([opt_len])
@@ -184,8 +184,9 @@ def create_example_new_format(row, vocab, vectorizer=None):
         opt_transformed = transform_sentence(utterance, vocab)
         example.features.feature[opt_key].int64_list.value.extend(opt_transformed)
         if FLAGS.has_dssm:
-#            example.features.feature[opt_dssm_key].bytes_list.value.extend([row_dssm[i+1].encode('utf-8')])
             example.features.feature[opt_dssm_key].float_list.value.extend([float(x) for x in row_dssm[i+1].split(',')])
+        if FLAGS.has_lcs:
+            example.features.feature[opt_lcs_key].float_list.value.extend(row_lcs[i])
     return example
 
 
@@ -216,35 +217,36 @@ def write_vocabulary(vocab_processor, outfile):
 
 
 if __name__ == "__main__":
-    vectorizer = None
-    if FLAGS.use_tfidf:
-        assert FLAGS.tfidf_in is not None and FLAGS.tfidf_out is not None
-        print("Creating TF-IDF vectorizer")
-        lines = read_all_lines(FLAGS.tfidf_in)
-        vectorizer = TfidfVectorizer(input='content', ngram_range=(1,3), stop_words ='english', sublinear_tf=True, max_features=10000,)
-        with open(FLAGS.tfidf_out, 'wb') as tfidfFile:
-            cPickle.dump(vectorizer, tfidfFile)
-    print("Creating vocabulary...")
+    TRAIN_PATH = os.path.join(FLAGS.train_in)
     input_iter = create_dialog_iter(TRAIN_PATH)
     input_iter = create_utterance_iter(input_iter)
-    vocab = create_vocab(input_iter, min_frequency=FLAGS.min_word_frequency)
-    print("Total vocabulary size: {}".format(len(vocab.vocabulary_)))
+    vocab = False
+    if FLAGS.vocab_exists:
+        print("Loading vocabulary...")
+        vocab = create_vocab(input_iter, min_frequency=FLAGS.min_word_frequency, create=False)
+        vocab.restore(FLAGS.vocab_processor)
+    else:
+        print("Creating vocabulary...")
+        vocab = create_vocab(input_iter, min_frequency=FLAGS.min_word_frequency)
+        print("Total vocabulary size: {}".format(len(vocab.vocabulary_)))
 
-    # Create vocabulary.txt file
-    write_vocabulary(
-        vocab, os.path.join(FLAGS.vocab_path))
+        # Create vocabulary.txt file
+        write_vocabulary(
+            vocab, os.path.join(FLAGS.vocab_path))
 
-    # Save vocab processor
-    vocab.save(os.path.join(FLAGS.vocab_processor))
+        # Save vocab processor
+        vocab.save(os.path.join(FLAGS.vocab_processor))
 
     # Create train.tfrecords
     create_tfrecords_file(
         input_filename=TRAIN_PATH,
         output_filename=os.path.join(FLAGS.train_out),
-        example_fn=functools.partial(create_example_new_format, vocab=vocab, vectorizer=vectorizer))
+        example_fn=functools.partial(create_example_new_format, vocab=vocab))
 
-    # Create validation.tfrecords
-    create_tfrecords_file(
-        input_filename=VALIDATION_PATH,
-        output_filename=os.path.join(FLAGS.validation_out),
-        example_fn=functools.partial(create_example_new_format, vocab=vocab, vectorizer=vectorizer))
+    if not FLAGS.validation_exists:
+        # Create validation.tfrecords
+        VALIDATION_PATH = os.path.join(FLAGS.validation_in)
+        create_tfrecords_file(
+            input_filename=VALIDATION_PATH,
+            output_filename=os.path.join(FLAGS.validation_out),
+            example_fn=functools.partial(create_example_new_format, vocab=vocab))

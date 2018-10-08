@@ -23,7 +23,7 @@ tf.flags.DEFINE_float("keep_rate", 1.0, "Drop out probability")
 tf.flags.DEFINE_float("decay_rate", 0.65, "Exponential decay rate")
 tf.flags.DEFINE_integer("factorization", -1, "Dimension for matrix multiplication factorization at last step")
 tf.flags.DEFINE_integer("batch_size", 16, "Batch size during training")
-tf.flags.DEFINE_integer("eval_batch_size", 32, "Batch size during evaluation")
+tf.flags.DEFINE_integer("eval_batch_size", 20, "Batch size during evaluation")
 tf.flags.DEFINE_integer("decay_steps", 5000, "Decay steps")
 tf.flags.DEFINE_string("optimizer", "Adam", "Optimizer Name (Adam, Adagrad, etc)")
 tf.flags.DEFINE_string("feature_type", "default", "Use last state(default), mean of states(mean), \
@@ -34,7 +34,7 @@ tf.flags.DEFINE_bool("residual", False, "Use residual connections?")
 tf.flags.DEFINE_bool("fastgrnn", False, "Use FastGRNN cell instead of LSTM?")
 tf.flags.DEFINE_bool("attention", False, "Use attention for alignment?")
 tf.flags.DEFINE_bool("dssm", False, "Use DSSM features?")
-tf.flags.DEFINE_bool("tfidf", False, "Use TF-IDF features?")
+tf.flags.DEFINE_bool("lcs", False, "Use LCS features?")
 
 FLAGS = tf.flags.FLAGS
 
@@ -60,7 +60,7 @@ HParams = namedtuple(
         "attention",
         "feature_type",
         "dssm",
-        "tfidf",
+        "lcs",
         "residual",
         "fastgrnn",
         "factorization",
@@ -88,7 +88,7 @@ def create_hparams():
         attention=FLAGS.attention,
         feature_type=FLAGS.feature_type,
         dssm=FLAGS.dssm,
-        tfidf=FLAGS.dssm,
+        lcs=FLAGS.lcs,
         residual=FLAGS.residual,
         fastgrnn=FLAGS.fastgrnn,
         factorization=FLAGS.factorization,
