@@ -11,3 +11,5 @@ Basic codebase from : https://github.com/IBM/dstc7-noesis
 * Attention
 * Fast GRNN
 * Using C-DSSM based sentence (pass on in input data) embeddings 
+* Custom Word2Vec embedding learning on dataset
+* Extend training set by taking 7th turn onwards as positive utterances
