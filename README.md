@@ -12,8 +12,6 @@ Please refer https://github.com/IBM/dstc7-noesis/tree/master/noesis-tf for requi
 * Attention (arg: --attention)
 * Fast GRNN (arg: --fastgrnn)
 * Using C-DSSM based sentence (pass on in input data) embeddings (arg: --dssm)
-* Custom Word2Vec embedding learning on dataset (arg: --factorization)
+* Custom Word2Vec embedding learning on dataset (For custom word2vec training, [read here](https://github.com/iamgroot42/dstc7/tree/master/CSharp/Word2Vec)
+* Matrix factorization to reduce time complexity and prevent overfitting (arg: --factorization)
 * Extend training set by taking 7th turn onwards as positive utterances
-
-
-For custom word2vec training, [read here](https://github.com/iamgroot42/dstc7/tree/master/CSharp/Word2Vec)
