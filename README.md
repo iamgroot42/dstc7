@@ -16,4 +16,4 @@ Please refer https://github.com/IBM/dstc7-noesis/tree/master/noesis-tf for requi
 * Extend training set by taking 7th turn onwards as positive utterances
 
 
-For custom word2vec training, [read here|https://github.com/iamgroot42/dstc7/tree/master/CSharp/Word2Vec]
+For custom word2vec training, [read here](https://github.com/iamgroot42/dstc7/tree/master/CSharp/Word2Vec)
